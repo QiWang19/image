@@ -455,6 +455,8 @@ type SystemContext struct {
 	SystemRegistriesConfPath string
 	// If not "", overrides the default path for the authentication file
 	AuthFilePath string
+	// if true, credentials are stored in kernel user keyring
+	AuthEnableKeyring bool
 	// If not "", overrides the use of platform.GOARCH when choosing an image or verifying architecture match.
 	ArchitectureChoice string
 	// If not "", overrides the use of platform.GOOS when choosing an image or verifying OS match.
