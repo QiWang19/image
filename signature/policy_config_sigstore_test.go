@@ -500,3 +500,54 @@ func TestPRSigstoreSignedFulcioUnmarshalJSON(t *testing.T) {
 		duplicateFields: []string{"caData", "oidcIssuer", "subjectEmail"},
 	}.run(t)
 }
+
+func TestPRSigstoreSignedPKIUnmarshalJSON(t *testing.T) {
+	policyJSONUmarshallerTests[PRSigstoreSignedPKI]{
+		newDest: func() json.Unmarshaler { return &prSigstoreSignedPKI{} },
+		newValidObject: func() (PRSigstoreSignedPKI, error) {
+			return NewPRSigstoreSignedPKI(
+				PRSigstoreSignedPKIWithCARootsPath("fixtures/fulcio_v1.crt.pem"),
+				PRSigstoreSignedPKIWithCAIntermediatesPath("fixtures/fulcio_v1.crt.pem"),
+				PRSigstoreSignedPKIWithSubjectEmail("mitr@redhat.com"),
+			)
+		},
+		otherJSONParser: nil,
+		breakFns: []func(mSA){
+			// Extra top-level sub-object
+			func(v mSA) { v["unexpected"] = 1 },
+			// Both of "caRootsPath" and "caRootsData" are missing
+			func(v mSA) { delete(v, "caRootsPath") },
+			// Both "caRootsPath" and "caRootsData" is present
+			func(v mSA) { v["caRootsData"] = "" },
+			// // Invalid "caPath" field
+			// func(v mSA) { v["caPath"] = 1 },
+			// Invalid "oidcIssuer" field
+			// func(v mSA) { v["oidcIssuer"] = 1 },
+			// // "oidcIssuer" is missing
+			// func(v mSA) { delete(v, "oidcIssuer") },
+			// Invalid "subjectEmail" field
+			func(v mSA) { v["subjectEmail"] = 1 },
+			// "subjectEmail" is missing
+			func(v mSA) { delete(v, "subjectEmail") },
+		},
+		duplicateFields: []string{"caRootsPath", "caIntermediatesPath", "subjectEmail"},
+	}.run(t)
+	// Test caData specifics
+	policyJSONUmarshallerTests[PRSigstoreSignedPKI]{
+		newDest: func() json.Unmarshaler { return &prSigstoreSignedPKI{} },
+		newValidObject: func() (PRSigstoreSignedPKI, error) {
+			return NewPRSigstoreSignedPKI(
+				PRSigstoreSignedPKIWithCARootsData([]byte("abc")),
+				PRSigstoreSignedPKIWithCAIntermediatesPath("fixtures/fulcio_v1.crt.pem"),
+				PRSigstoreSignedPKIWithSubjectEmail("mitr@redhat.com"),
+			)
+		},
+		otherJSONParser: nil,
+		breakFns: []func(mSA){
+			// Invalid "caData" field
+			func(v mSA) { v["caRootsData"] = 1 },
+			func(v mSA) { v["caRootsData"] = "this is invalid base64" },
+		},
+		duplicateFields: []string{"caRootsData", "caIntermediatesPath", "subjectEmail"},
+	}.run(t)
+}

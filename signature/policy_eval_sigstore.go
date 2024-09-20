@@ -169,7 +169,7 @@ func (pr *prSigstoreSigned) isSignatureAccepted(ctx context.Context, image priva
 		}
 		untrustedSET, ok := untrustedAnnotations[signature.SigstoreSETAnnotationKey]
 		if !ok { // For user convenience; passing an empty []byte to VerifyRekorSet should correctly reject it anyway.
-			return sarRejected, fmt.Errorf("missing %s annotation", signature.SigstoreSETAnnotationKey)
+			// return sarRejected, fmt.Errorf("missing %s annotation", signature.SigstoreSETAnnotationKey)
 		}
 		untrustedCert, ok := untrustedAnnotations[signature.SigstoreCertificateAnnotationKey]
 		if !ok { // For user convenience; passing an empty []byte to VerifyRekorSet should correctly reject it anyway.

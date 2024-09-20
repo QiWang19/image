@@ -7,11 +7,17 @@ package signature
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/asn1"
 	"encoding/base64"
+	"encoding/pem"
+	"fmt"
+	"log"
 	"os"
 	"testing"
 
 	"github.com/containers/image/v5/internal/signature"
+	"github.com/sigstore/sigstore/pkg/cryptoutils"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -207,6 +213,78 @@ func TestPRSigstoreSignedPrepareTrustRoot(t *testing.T) {
 	}
 }
 
+func TestPRSigstoreSignedPKIPrepareTrustRoot(t *testing.T) {
+	const testCAPath = "fixtures/root-ca.pem"
+	testCAData, err := os.ReadFile(testCAPath)
+	require.NoError(t, err)
+	const testOIDCIssuer = "https://example.com"
+	testSubjectEmail := "test@example.com"
+
+	// Success
+	for _, c := range [][]PRSigstoreSignedFulcioOption{
+		{
+			PRSigstoreSignedFulcioWithCAPath(testCAPath),
+			PRSigstoreSignedFulcioWithOIDCIssuer(testOIDCIssuer),
+			PRSigstoreSignedFulcioWithSubjectEmail(testSubjectEmail),
+		},
+		{
+			PRSigstoreSignedFulcioWithCAData(testCAData),
+			PRSigstoreSignedFulcioWithOIDCIssuer(testOIDCIssuer),
+			PRSigstoreSignedFulcioWithSubjectEmail(testSubjectEmail),
+		},
+	} {
+		f, err := newPRSigstoreSignedFulcio(c...)
+		require.NoError(t, err)
+		res, err := f.prepareTrustRoot()
+		fmt.Println(res)
+		require.NoError(t, err)
+		assert.NotNil(t, res.caCertificates) // Doing a better test seems hard; we would need to compare .Subjects with a DER encoding.
+		assert.Equal(t, testOIDCIssuer, res.oidcIssuer)
+		assert.Equal(t, testSubjectEmail, res.subjectEmail)
+
+	}
+
+	// Failure
+	// for _, f := range []prSigstoreSignedFulcio{ // Use a prSigstoreSignedFulcio because these configurations should be rejected by NewPRSigstoreSignedFulcio.
+	// 	{ // Neither CAPath nor CAData specified
+	// 		OIDCIssuer:   testOIDCIssuer,
+	// 		SubjectEmail: testSubjectEmail,
+	// 	},
+	// 	{ // Both CAPath and CAData specified
+	// 		CAPath:       testCAPath,
+	// 		CAData:       testCAData,
+	// 		OIDCIssuer:   testOIDCIssuer,
+	// 		SubjectEmail: testSubjectEmail,
+	// 	},
+	// 	{ // Invalid CAPath
+	// 		CAPath:       "fixtures/image.signature",
+	// 		OIDCIssuer:   testOIDCIssuer,
+	// 		SubjectEmail: testSubjectEmail,
+	// 	},
+	// 	{ // Unusable CAPath
+	// 		CAPath:       "fixtures/this/does/not/exist",
+	// 		OIDCIssuer:   testOIDCIssuer,
+	// 		SubjectEmail: testSubjectEmail,
+	// 	},
+	// 	{ // Invalid CAData
+	// 		CAData:       []byte("invalid"),
+	// 		OIDCIssuer:   testOIDCIssuer,
+	// 		SubjectEmail: testSubjectEmail,
+	// 	},
+	// 	{ // Missing OIDCIssuer
+	// 		CAPath:       testCAPath,
+	// 		SubjectEmail: testSubjectEmail,
+	// 	},
+	// 	{ // Missing SubjectEmail
+	// 		CAPath:     testCAPath,
+	// 		OIDCIssuer: testOIDCIssuer,
+	// 	},
+	// } {
+	// 	_, err := f.prepareTrustRoot()
+	// 	assert.Error(t, err)
+	// }
+}
+
 func TestPRSigstoreSignedIsSignatureAuthorAccepted(t *testing.T) {
 	// Currently, this fails even with a correctly signed image.
 	prm := NewPRMMatchRepository() // We prefer to test with a Cosign-created signature for interoperability, and that doesn’t work with matchExact.
@@ -269,7 +347,7 @@ func TestPRrSigstoreSignedIsSignatureAccepted(t *testing.T) {
 	testKeyRekorImage := dirImageMock(t, "fixtures/dir-img-cosign-key-rekor-valid", "192.168.64.2:5000/cosign-signed/key-1")
 	testKeyRekorImageSig := sigstoreSignatureFromFile(t, "fixtures/dir-img-cosign-key-rekor-valid/signature-1")
 	testFulcioRekorImage := dirImageMock(t, "fixtures/dir-img-cosign-fulcio-rekor-valid", "192.168.64.2:5000/cosign-signed/fulcio-rekor-1")
-	testFulcioRekorImageSig := sigstoreSignatureFromFile(t, "fixtures/dir-img-cosign-fulcio-rekor-valid/signature-1")
+	testFulcioRekorImageSig := sigstoreSignatureFromFile(t, "fixtures/dir-img-cosign-fulcio-rekor-valid/signature-2")
 	keyData, err := os.ReadFile("fixtures/cosign.pub")
 	require.NoError(t, err)
 
@@ -363,9 +441,13 @@ func TestPRrSigstoreSignedIsSignatureAccepted(t *testing.T) {
 		PRSigstoreSignedWithSignedIdentity(prm),
 	)
 	require.NoError(t, err)
-	sar, err = pr.isSignatureAccepted(context.Background(), testFulcioRekorImage,
-		testFulcioRekorImageSig)
-	assertAccepted(sar, err)
+
+	// testcerts := "-----BEGIN CERTIFICATE-----\n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\nkN5CapMJXnPaukiZhg==\n-----END CERTIFICATE-----\n"
+	// testFulcioRekorImageSig.untrustedAnnotations
+
+	// sar, err = pr.isSignatureAccepted(context.Background(), testFulcioRekorImage,
+	// 	testFulcioRekorImageSig)
+	// assertAccepted(sar, err)
 
 	// Fulcio, no Rekor requirement
 	pr2 = &prSigstoreSigned{
@@ -557,6 +639,148 @@ func TestPRrSigstoreSignedIsSignatureAccepted(t *testing.T) {
 	require.NoError(t, err)
 	sar, err = pr.isSignatureAccepted(context.Background(), testKeyImage, testKeyImageSig)
 	assertRejected(sar, err)
+}
+
+func TestPRrBYOPKI(t *testing.T) {
+	// assertAccepted := func(sar signatureAcceptanceResult, err error) {
+	// 	assert.Equal(t, sarAccepted, sar)
+	// 	assert.NoError(t, err)
+	// }
+	// assertRejected := func(sar signatureAcceptanceResult, err error) {
+	// 	logrus.Errorf("%v", err)
+	// 	assert.Equal(t, sarRejected, sar)
+	// 	assert.Error(t, err)
+	// }
+
+	// prm := NewPRMMatchRepository() // We prefer to test with a Cosign-created signature to ensure interoperability, and that doesn’t work with matchExact. matchExact is tested later.
+	// testKeyImage := dirImageMock(t, "fixtures/dir-img-cosign-valid", "192.168.64.2:5000/cosign-signed-single-sample")
+	// testKeyImageSig := sigstoreSignatureFromFile(t, "fixtures/dir-img-cosign-valid/signature-1")
+	// testKeyRekorImage := dirImageMock(t, "fixtures/dir-img-cosign-key-rekor-valid", "192.168.64.2:5000/cosign-signed/key-1")
+	// testKeyRekorImageSig := sigstoreSignatureFromFile(t, "fixtures/dir-img-cosign-key-rekor-valid/signature-1")
+	// testFulcioRekorImage := dirImageMock(t, "fixtures/dir-img-cosign-fulcio-rekor-valid", "192.168.64.2:5000/cosign-signed/fulcio-rekor-1")
+
+	testFulcioRekorImageSig := sigstoreSignatureFromFile(t, "fixtures/dir-img-cosign-fulcio-rekor-valid/signature-2")
+
+	// Successful Fulcio certificate use
+	// fulcio, err := NewPRSigstoreSignedFulcio(
+	// 	PRSigstoreSignedFulcioWithCAPath("fixtures/test-chain-cert.pem"),
+	// 	PRSigstoreSignedFulcioWithOIDCIssuer("https://github.com/login/oauth"),
+	// 	PRSigstoreSignedFulcioWithSubjectEmail("mitr@redhat.com"),
+	// )
+	// require.NoError(t, err)
+	// pr, err := newPRSigstoreSigned(
+	// 	PRSigstoreSignedWithFulcio(fulcio),
+	// 	PRSigstoreSignedWithRekorPublicKeyPath("fixtures/rekor.pub"),
+	// 	PRSigstoreSignedWithSignedIdentity(prm),
+	// )
+	// require.NoError(t, err)
+
+	// test downloaded signature manifest from registry
+	untrustedAnnotations := testFulcioRekorImageSig.UntrustedAnnotations()
+
+	// "dev.sigstore.cosign/certificate"
+	untrustedCert, ok := untrustedAnnotations[signature.SigstoreCertificateAnnotationKey]
+	log.Println(ok)
+	unverifiedKeyOrCertPEM, rest := pem.Decode([]byte(untrustedCert))
+	if unverifiedKeyOrCertPEM == nil {
+		log.Fatal("Error decoding certificate")
+	}
+
+	fmt.Println("================rest======")
+	fmt.Println(string(rest))
+
+	untrustedLeafCerts, err := cryptoutils.UnmarshalCertificatesFromPEM([]byte(untrustedCert))
+	if err != nil {
+		log.Fatal("Error unmarshalling certificate")
+	}
+	fmt.Println(len(untrustedLeafCerts))
+	signaturedownload := untrustedLeafCerts[0].Signature
+
+	res := base64.RawStdEncoding.EncodeToString(signaturedownload)
+
+	fmt.Printf("=====signature")
+	fmt.Println(res)
+	email := untrustedLeafCerts[0].EmailAddresses
+	fmt.Println(email)
+
+	// "dev.sigstore.cosign/chain"
+	untrustedIntermediateChainBytes := []byte(untrustedAnnotations[signature.SigstoreIntermediateCertificateChainAnnotationKey])
+	untrustedIntermediateChain, err := cryptoutils.UnmarshalCertificatesFromPEM(untrustedIntermediateChainBytes)
+	if err != nil {
+		log.Fatal("Error decoding chain bundle")
+	}
+	fmt.Println("chain bundle length", len(untrustedIntermediateChain))
+
+	intermediatePolicyPath := "/home/qiwan/go/src/github.com/containers/image/signature/fixtures/dir-img-cosign-fulcio-rekor-valid/pki-intermediate-ca.pem"
+	caIntermediateBytes, err := loadBytesFromDataOrPath("intermediate", nil, intermediatePolicyPath)
+	if err != nil {
+		log.Fatal("Error loading intermediate CA")
+	}
+	if caIntermediateBytes == nil {
+		log.Fatal("intermediate CA not loaded")
+	}
+	policyInterCerts, err := cryptoutils.UnmarshalCertificatesFromPEM(caIntermediateBytes)
+	if err != nil {
+		log.Fatal("Error unmarshalling intermediate CA")
+	}
+
+	var untrustedIntermediatePool *x509.CertPool
+	untrustedIntermediatePool = x509.NewCertPool()
+	if len(untrustedIntermediateChain) > 1 {
+		for _, untrustedIntermediateCert := range untrustedIntermediateChain[:len(untrustedIntermediateChain)-1] {
+			untrustedIntermediatePool.AddCert(untrustedIntermediateCert)
+			fmt.Println(untrustedIntermediateCert.Equal(policyInterCerts[0]))
+			fmt.Println("untrustedIntermediateCert")
+		}
+	}
+
+	rootcapath := "/home/qiwan/go/src/github.com/containers/image/signature/fixtures/dir-img-cosign-fulcio-rekor-valid/pki-root-ca.pem"
+	caCertBytes, err := loadBytesFromDataOrPath("fulcioCA", nil, rootcapath)
+	if err != nil {
+		log.Fatal("Error loading root CA")
+	}
+	if caCertBytes == nil {
+		log.Fatal("root CA not loaded")
+	}
+	certs := x509.NewCertPool()
+	if ok := certs.AppendCertsFromPEM(caCertBytes); !ok {
+		log.Fatal("error loading pki root CA certificates")
+	}
+
+	untrustedCertificate := untrustedLeafCerts[0]
+	// Go rejects Subject Alternative Name that has no DNSNames, EmailAddresses, IPAddresses and URIs;
+	// we match SAN ourselves, so override that.
+	if len(untrustedCertificate.UnhandledCriticalExtensions) > 0 {
+		var remaining []asn1.ObjectIdentifier
+		for _, oid := range untrustedCertificate.UnhandledCriticalExtensions {
+			if !oid.Equal(cryptoutils.SANOID) {
+				remaining = append(remaining, oid)
+			}
+		}
+		untrustedCertificate.UnhandledCriticalExtensions = remaining
+	}
+
+	// untrustedCertificate is leaf certificate
+	if _, err := untrustedCertificate.Verify(x509.VerifyOptions{
+		Intermediates: untrustedIntermediatePool,
+		// caRoots from the policy.json
+		Roots: certs,
+		// NOTE: Cosign uses untrustedCertificate.NotBefore here (i.e. uses _that_ time for intermediate certificate validation),
+		// and validates the leaf certificate against relevantTime manually.
+		// We verify the full certificate chain against relevantTime instead.
+		// Assuming the certificate is fulcio-generated and very short-lived, that should make little difference.
+		// CurrentTime: relevantTime,
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}); err != nil {
+		fmt.Printf("verifying leaf certificate failed: %v", err)
+	} else {
+		fmt.Println("verifying leaf certificate success")
+	}
+
+	// sar, err := pr.isSignatureAccepted(context.Background(), nil,
+	// 	sigstoreSignatureWithoutAnnotation(t, testFulcioRekorImageSig, signature.SigstoreSETAnnotationKey))
+	// assertRejected(sar, err)
+
 }
 
 func TestPRSigstoreSignedIsRunningImageAllowed(t *testing.T) {

@@ -189,6 +189,8 @@ func VerifyRekorSET(publicKey *ecdsa.PublicKey, unverifiedRekorSET []byte, unver
 	if unverifiedKeyOrCertPEM == nil {
 		return time.Time{}, NewInvalidSignatureError("public key or cert to be matched against publicKey in Rekor SET is not in PEM format")
 	}
+	fmt.Println("================headers======")
+	fmt.Println(unverifiedKeyOrCertPEM.Headers)
 	if len(rest) != 0 {
 		return time.Time{}, NewInvalidSignatureError("public key or cert to be matched against publicKey in Rekor SET has trailing data")
 	}

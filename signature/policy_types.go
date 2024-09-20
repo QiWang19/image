@@ -130,6 +130,8 @@ type prSigstoreSigned struct {
 	// (and Rekor inclusion is not required if a Rekor public key is not specified).
 	RekorPublicKeyData []byte `json:"rekorPublicKeyData,omitempty"`
 
+	PKI PRSigstoreSignedPKI `json:"pki,omitempty"`
+
 	// SignedIdentity specifies what image identity the signature must be claiming about the image.
 	// Defaults to "matchRepoDigestOrExact" if not specified.
 	// Note that /usr/bin/cosign interoperability might require using repo-only matching.
@@ -154,6 +156,26 @@ type prSigstoreSignedFulcio struct {
 	OIDCIssuer string `json:"oidcIssuer,omitempty"`
 	// SubjectEmail specifies the expected email address of the authenticated OIDC identity, recorded by Fulcio into the generated certificates.
 	SubjectEmail string `json:"subjectEmail,omitempty"`
+}
+
+// PRSigstoreSignedPKI contains PKI configuration options for a "sigstoreSigned" PolicyRequirement.
+type PRSigstoreSignedPKI interface {
+	// toPKI creates a PKI from the input data.
+}
+
+// prSigstoreSignedPKI contains PKI configuration options for prSigstoreSigned
+type prSigstoreSignedPKI struct {
+	CARootsPath         string `json:"caRootsPath"`
+	CARootsData         []byte `json:"caRootsData"`
+	CAIntermediatesPath string `json:"caIntermediatesPath"`
+	CAIntermediatesData []byte `json:"caIntermediatesData"`
+	SubjectEmail        string `json:"subjectEmail"`
+	Hostname            string `json:"hostname"`
+	IPAddress           string `json:"ipAddress"`
+}
+
+// CertificateIdentity specifies the identity of the certificate subject.
+type CertificateIdentity struct {
 }
 
 // PolicyReferenceMatch specifies a set of image identities accepted in PolicyRequirement.
