@@ -732,6 +732,15 @@ func TestPRrBYOPKI(t *testing.T) {
 			fmt.Println(untrustedIntermediateCert.Equal(policyInterCerts[0]))
 			fmt.Println("untrustedIntermediateCert")
 		}
+
+		for _, untrustedIntermediateCert := range untrustedIntermediateChain {
+			isca := untrustedIntermediateCert.IsCA
+			issuer := untrustedIntermediateCert.Issuer.String()
+			sub := untrustedIntermediateCert.Subject.String()
+			fmt.Println("isca", isca)
+			fmt.Println("issuer", issuer)
+			fmt.Println("sub", sub)
+		}
 	}
 
 	rootcapath := "/home/qiwan/go/src/github.com/containers/image/signature/fixtures/dir-img-cosign-fulcio-rekor-valid/pki-root-ca.pem"
